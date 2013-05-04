@@ -8,6 +8,8 @@ import os
 import ConfigParser
 import json
 import prettytable
+import sh
+import platform
 from urlparse import urljoin
 from hurry.filesize import size
 
@@ -16,6 +18,7 @@ datacenters = ['lvs', 'zrh']
 homefolder = os.path.expanduser('~')
 confighome = os.path.join(homefolder, '.cloudsigma')
 configfile = os.path.join(confighome, 'deltasigma.conf')
+operatingsystem = platform.platform()
 
 
 def main():
@@ -38,6 +41,10 @@ def main():
     parser.add_argument('--start-server', help='Start a server.')
     parser.add_argument('--stop-server', help='Stop a server.')
     parser.add_argument('--delete-server', help='Delete a server.')
+
+    # Implement with 'open' on Mac OS X and 'xdg-open' on Linux
+    parser.add_argument('--connect-ssh', help='Open an SSH session to the server (opens in a new window).')
+    parser.add_argument('--connect-vnc', help='Open a VNC session to the server.')
 
     #parser.add_argument('--create-server', action='store_true', help='Create a new server.')
     #subparsers = parser.add_subparsers(help='sub-command help')
@@ -63,6 +70,9 @@ def main():
     elif args.delete_server:
         config = get_config(args.username, args.password, args.datacenter)
         delete_server(config['username'], config['password'], config['datacenter'], args.delete_server)
+    elif args.connect_vnc:
+        config = get_config(args.username, args.password, args.datacenter)
+        connect_vnc(config['username'], config['password'], config['datacenter'], args.connect_vnc)
     elif not os.path.isfile(configfile):
         print 'Could not find config-file. Please run `deltasigma --init`.'
         sys.exit(1)
@@ -212,7 +222,7 @@ def get_server_info(username, password, datacenter, servername, interactive=True
             print "Couldn't find any servers..."
             sys.exit(1)
 
-        table = prettytable.PrettyTable(['Server name', 'Status', 'CPU (Mhz)', 'RAM', 'VNC Password', 'External IP'])
+        table = prettytable.PrettyTable(['Server name', 'Status', 'CPU (Mhz)', 'RAM', 'Data sent', 'Data received', 'External IP'])
         found = False
         server_info = ''
         for server in objects:
@@ -220,13 +230,17 @@ def get_server_info(username, password, datacenter, servername, interactive=True
                 found = True
                 server_info = server
 
+                #print server
                 if server_info['status'] == 'running':
                     ip = server['nics'][0]['ip_v4_conf']['ip']['uuid']
                 else:
                     ip = None
 
-                human_readable_ram = size(server['mem'])
-                table.add_row([server['name'], server['status'], server['cpu'], human_readable_ram, server['vnc_password'], ip])
+                ram = size(server['mem'])
+
+                data_sent = size(int(server['runtime']['nics'][0]['io']['bytes_sent']))
+                data_recv = size(int(server['runtime']['nics'][0]['io']['bytes_recv']))
+                table.add_row([server['name'], server['status'], server['cpu'], ram, data_sent, data_recv, ip])
 
         if found and interactive:
             print table
@@ -296,6 +310,44 @@ def delete_server(username, password, datacenter, servername):
         print 'Failed to deleted server %s.' % servername
         sys.exit(1)
 
+
+def connect_vnc(username, password, datacenter, servername):
+
+    server_info = get_server_info(username, password, datacenter, servername, interactive=False)
+
+    if server_info['status'] != 'running':
+        print 'Server %s is not running. Cannot connect.' % servername
+        sys.exit(1)
+
+    vnc_password = server_info['vnc_password']
+    enable_vnc = make_post_connection(username, password, datacenter, 'servers/%s/action/?do=open_vnc' % server_info['uuid'])
+
+    if enable_vnc['result'] == 'success':
+        connection_string = 'vnc://:%s@%s' % (vnc_password, enable_vnc['vnc_url'].strip('vnc://'))
+
+        if 'darwin' in operatingsystem.lower():
+            sh.open(connection_string)
+        elif 'linux' in operatingsystem.lower():
+            sh.xdg-open(connection_string)
+        else:
+            print 'Unsupported platform.'
+            sys.exit(1)
+
+        post_connection_disable = raw_input('\nDisable VNC connection? (Yes/No): ')
+        if 'yes' in post_connection_disable.lower():
+            disable_vnc = make_post_connection(username, password, datacenter, 'servers/%s/action/?do=close_vnc' % server_info['uuid'])
+            if disable_vnc['result'] == 'success':
+                print 'Successfully disabled VNC.'
+                sys.exit(0)
+            else:
+                print 'Failed to disable VNC.'
+                sys.exit(1)
+        else:
+            print 'Leaving VNC in enabled state.'
+            sys.exit(0)
+    else:
+        print 'Unable to enable VNC.'
+        sys.exit(1)
 
 ## Drive related actions
     # TODO
