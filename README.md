@@ -1,4 +1,5 @@
-deltasigma
-==========
+# deltasigma
 
-Control your CloudSigma cloud in the comfort of your terminal.
+Warning: Work in progress.
+
+A handy tool to control your CloudSigma architecture from the comfort of your terminal.
