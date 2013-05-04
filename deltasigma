@@ -124,6 +124,9 @@ def get_config(username, password, datacenter):
 
     return config_values
 
+
+## Connection helpers
+
 def make_get_connection(username, password, datacenter, endpoint):
     api = 'https://%s.cloudsigma.com/api/2.0/' % datacenter
     api_target = urljoin(api, endpoint)
@@ -175,6 +178,8 @@ def make_delete_connection(username, password, datacenter, endpoint):
         print 'Received status code %d.' % r.status_code
         return False
 
+
+## Server related actions
 
 def get_server_list(username, password, datacenter):
     print "Retrieving your server list..."
@@ -277,7 +282,12 @@ def delete_server(username, password, datacenter, servername):
         print "Server %s is running. Can't delete a running server." % servername
         sys.exit(1)
 
-    server_info = make_delete_connection(username, password, datacenter, 'servers/%s/' % server_info['uuid'])
+    name_verification = raw_input('\nAre you sure? Type in the server name again and press enter to proceed.\n')
+    if name_verification.lower() == server_info['name'].lower():
+        server_info = make_delete_connection(username, password, datacenter, 'servers/%s/' % server_info['uuid'])
+    else:
+        print 'Verification failed. Aborting.'
+        sys.exit(1)
 
     if server_info:
         print 'Successfully deleted server %s.' % servername
@@ -285,6 +295,10 @@ def delete_server(username, password, datacenter, servername):
     else:
         print 'Failed to deleted server %s.' % servername
         sys.exit(1)
+
+
+## Drive related actions
+    # TODO
 
 if __name__ == "__main__":
     main()
