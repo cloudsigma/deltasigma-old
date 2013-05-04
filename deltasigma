@@ -1,0 +1,246 @@
+#!/usr/bin/env python
+# -*- coding: utf8 -*-
+
+import requests
+import argparse
+import sys
+import os
+import ConfigParser
+import json
+import prettytable
+from urlparse import urljoin
+from hurry.filesize import size
+
+
+datacenters = ['lvs', 'zrh']
+homefolder = os.path.expanduser('~')
+confighome = os.path.join(homefolder, '.cloudsigma')
+configfile = os.path.join(confighome, 'deltasigma.conf')
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Welcome to CloudSigma's DeltaSigma. Control your cloud in the comfort of your terminal.",
+        epilog="Happy Hacking!",
+    )
+
+    # Valid input arguments
+
+    ## Initiation related
+    parser.add_argument('-i', '--init', action='store_true', help='Run DeltaSigma initiation process and store your credentials on disk. Please note that this will overwrite the existing values.')
+    parser.add_argument('-u', '--username', help='Your CloudSigma username.')
+    parser.add_argument('-p', '--password', help='Your CloudSigma password.')
+    parser.add_argument('-dc', '--datacenter', help="Specify your datacenter. Valid options are 'LVS' (Las Vegas) and 'ZRH' (Zurich).")
+
+    ## Server
+    parser.add_argument('-ls', '--list-servers', action='store_true', help='List your servers.')
+    parser.add_argument('-si', '--server-info', help='Get information about a given server. Use `deltasigma--list-servers` to list your servers.')
+    parser.add_argument('--start-server', help='Start a server.')
+    parser.add_argument('--stop-server', help='Stop a server.')
+
+    #parser.add_argument('--create-server', action='store_true', help='Create a new server.')
+    #subparsers = parser.add_subparsers(help='sub-command help')
+    #parser_create_server = subparsers.add_parser('create_server', help='Create server help')
+    #parser_create_server.add_argument('--cpu', help='Amount of CPU')
+
+    args = parser.parse_args()
+
+    if args.init:
+        init_process(args.username, args.password, args.datacenter)
+    elif args.list_servers:
+        config = get_config(args.username, args.password, args.datacenter)
+        get_server_list(config['username'], config['password'], config['datacenter'])
+    elif args.server_info:
+        config = get_config(args.username, args.password, args.datacenter)
+        get_server_info(config['username'], config['password'], config['datacenter'], args.server_info)
+    elif args.start_server:
+        config = get_config(args.username, args.password, args.datacenter)
+        start_server(config['username'], config['password'], config['datacenter'], args.start_server)
+    elif args.stop_server:
+        config = get_config(args.username, args.password, args.datacenter)
+        stop_server(config['username'], config['password'], config['datacenter'], args.stop_server)
+    elif not os.path.isfile(configfile):
+        print 'Could not find config-file. Please run `deltasigma --init`.'
+        sys.exit(1)
+    else:
+        parser.print_help()
+
+
+def init_process(username, password, datacenter):
+    if not (username and password):
+        print "You must specify your username, password. See `deltasigma --help` for more details."
+        sys.exit(1)
+    elif not datacenter.lower() in datacenters:
+        print "You must specify your datacenter. See `deltasigma --help` for more details."
+        sys.exit(1)
+
+    if not os.path.isdir(confighome):
+        os.mkdir(confighome)
+
+    config = ConfigParser.RawConfigParser()
+    config.add_section('Main')
+    config.set('Main', 'datacenter', datacenter)
+    config.set('Main', 'password', password)
+    config.set('Main', 'username', username)
+
+    with open(configfile, 'wb') as f:
+        config.write(f)
+
+    # Set appropriate permission level
+    os.chmod(configfile, 0600)
+
+    print 'Well done. You should now be able to use DeltaSigma.'
+    sys.exit(0)
+
+
+def get_config(username, password, datacenter):
+    """
+    Return the config value. Pass in argparser variables.
+    Command line arguments overrides config-file variables.
+    """
+
+    config_values = {}
+    config = ConfigParser.ConfigParser()
+    config.read(configfile)
+
+    if username:
+        config_values['username'] = username
+    else:
+        config_values['username'] = config.get('Main', 'username')
+
+    if password:
+        config_values['password'] = password
+    else:
+        config_values['password'] = config.get('Main', 'password')
+
+    if datacenter:
+        config_values['datacenter'] = datacenter
+    else:
+        config_values['datacenter'] = config.get('Main', 'datacenter')
+
+    return config_values
+
+def make_get_connection(username, password, datacenter, endpoint):
+    api = 'https://%s.cloudsigma.com/api/2.0/' % datacenter
+    api_target = urljoin(api, endpoint)
+
+    r = requests.get(api_target, auth=(username, password))
+
+    if r.status_code == 200:
+        return json.loads(r.content)
+    elif r.status_code == 401:
+        print "Unable to authenticate. Please verify your credentials."
+        sys.exit(1)
+    else:
+        print 'Received status code %d.' % r.status_code
+        return False
+
+def make_post_connection(username, password, datacenter, endpoint):
+    api = 'https://%s.cloudsigma.com/api/2.0/' % datacenter
+    api_target = urljoin(api, endpoint)
+
+    r = requests.post(api_target, auth=(username, password))
+
+    if r.status_code in [201, 202]:
+        return json.loads(r.content)
+    elif r.status_code == 401:
+        print "Unable to authenticate. Please verify your credentials."
+        sys.exit(1)
+    else:
+        print 'Received status code %d.' % r.status_code
+        return False
+
+def get_server_list(username, password, datacenter):
+    print "Retrieving your server list..."
+    server_list = make_get_connection(username, password, datacenter, 'servers/')
+    if server_list:
+        server_count = len(server_list['objects'])
+
+        if server_count > 0:
+            table = prettytable.PrettyTable(['Server name', 'Status'])
+
+            for server in server_list['objects']:
+                table.add_row([server['name'], server['status']])
+            print '\n'
+            print table
+            print '\n'
+
+        print 'Found %d server(s).' % server_count
+        sys.exit(0)
+    else:
+        print 'Unable to retrieve server list...'
+        sys.exit(1)
+
+def get_server_info(username, password, datacenter, servername, interactive=True):
+    server_info = make_get_connection(username, password, datacenter, 'servers/detail/')
+    if server_info:
+
+        objects = server_info['objects']
+        if len(objects) <= 1:
+            print "Couldn't find any servers..."
+            sys.exit(1)
+
+        table = prettytable.PrettyTable(['Server name', 'Status', 'CPU (Mhz)', 'RAM', 'VNC Password', 'External IP'])
+        found = False
+        server_info = ''
+        for server in objects:
+            if servername.lower() == server['name'].lower():
+                found = True
+                server_info = server
+
+                if server_info['status'] == 'running':
+                    ip = server['nics'][0]['ip_v4_conf']['ip']['uuid']
+                else:
+                    ip = None
+
+                human_readable_ram = size(server['mem'])
+                table.add_row([server['name'], server['status'], server['cpu'], human_readable_ram, server['vnc_password'], ip])
+
+        if found and interactive:
+            print table
+        elif found and not interactive:
+            return server_info
+        else:
+            print 'Unable to find server %s.' % servername
+            sys.exit(1)
+
+    else:
+        print 'Unable to retrieve server information...'
+        sys.exit(1)
+
+
+def start_server(username, password, datacenter, servername):
+    server_info = get_server_info(username, password, datacenter, servername, interactive=False)
+
+    if server_info['status'] != 'stopped':
+        print 'Server %s is already running.' % servername
+        sys.exit(1)
+
+    server_info = make_post_connection(username, password, datacenter, 'servers/%s/action/?do=start' % server_info['uuid'])
+
+    if server_info['result'] == 'success':
+        print 'Successfully started %s.' % servername
+        sys.exit(0)
+    else:
+        print 'Failed to start server %s.' % servername
+        sys.exit(1)
+
+
+def stop_server(username, password, datacenter, servername):
+    server_info = get_server_info(username, password, datacenter, servername, interactive=False)
+
+    if server_info['status'] != 'running':
+        print 'Server %s is already stopped.' % servername
+        sys.exit(1)
+
+    server_info = make_post_connection(username, password, datacenter, 'servers/%s/action/?do=stop' % server_info['uuid'])
+
+    if server_info['result'] == 'success':
+        print 'Successfully stopped %s.' % servername
+        sys.exit(0)
+    else:
+        print 'Failed to stop server %s.' % servername
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
