@@ -330,8 +330,8 @@ def connect_vnc(username, password, datacenter, servername):
         elif 'linux' in operatingsystem.lower():
             sh.xdg-open(connection_string)
         else:
-            print 'Unsupported platform.'
-            sys.exit(1)
+            print 'Unsupported platform. Please connect manually to:\n%s' % connection_string
+            sys.exit(0)
 
         post_connection_disable = raw_input('\nDisable VNC connection? (Yes/No): ')
         if 'yes' in post_connection_disable.lower():
